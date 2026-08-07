@@ -1,6 +1,9 @@
 # Remote Control 설정 및 이중화 작업 준비 정리
 
-> 작성일: 2026-07-27 / 최종 갱신: 2026-08-06 / Question 세션 대화 내용 정리
+> 작성일: 2026-07-27 / 최종 갱신: 2026-08-07
+
+> **2026-08-07 정리**: 테스트/미사용 폴더 `question`, `aa`, `test`를 전부 삭제했다 (폴더·대화기록·`~/.claude.json` 항목·`.vbs` 백업 파일 일체). 등록 세션은 9개 → **8개**.
+> 이와 함께 **운영 방식을 `-c` 하나로 통일**했다. 예전에 Question에만 쓰던 `--resume <포크UUID>` 방식은 더 이상 쓰지 않는다 (4장 참고).
 
 ## 1. 이중화 작업 폴더 결정
 
@@ -14,16 +17,15 @@
 **이제 파워셸/터미널 창 없이 동작한다.**
 
 - 시작프로그램 스크립트: `C:\Users\sanghyeon\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\claude-remote-control.vbs`
-- PC를 켜고 로그인하면 **20초 후 9개 세션이 전부 창 없이 백그라운드로 자동 실행**됨
+- PC를 켜고 로그인하면 **20초 후 8개 세션이 전부 창 없이 백그라운드로 자동 실행**됨
 - 태블릿 접속: 창이 없어 QR은 안 뜨므로, Claude 앱 **세션 목록에서 이름으로 선택**해 접속
   - 재부팅하면 세션이 새로 발급되므로 목록에서 **가장 최신** 세션을 선택할 것
   - ⚠️ Code 탭의 컴퓨터 아이콘은 매번 새 세션을 만드니 사용하지 말 것
 
-### 자동 실행되는 9개 세션 (2026-08-06 기준)
+### 자동 실행되는 8개 세션 (2026-08-07 기준)
 
 | 폴더 | 태블릿 표시 이름 |
 |---|---|
-| D:\test_workspace\question | Question |
 | D:\test_workspace\tokbell_ha | Tokbell HA |
 | D:\workspace\morning_economy | Morning Economy |
 | D:\workspace\Tokbell | Tokbell |
@@ -44,7 +46,6 @@
 
 | 폴더 | 이어받기 | 이유 |
 |---|---|---|
-| Question | ✅ `-c` | 2026-08-06에 미적용 → `-c`로 변경 (특정 대화 고정은 아래 이유로 불가) |
 | Tokbell HA | ✅ `-c` | 이중화 작업이 여러 날 이어짐 |
 | Tokbell | ✅ `-c` | 개발 프로젝트, 맥락 유지 이득 |
 | Tokbell Sender | ✅ `-c` | 개발 프로젝트, 맥락 유지 이득 |
@@ -52,9 +53,9 @@
 | Webs Madang | ✅ `-c` | 개발 프로젝트, 맥락 유지 이득 |
 | kafka test_로컬 | ✅ `-c` | 개발 프로젝트, 맥락 유지 이득 |
 | AskMeAnything | ✅ `-c` | 2026-08-06 등록, 개발 프로젝트 |
-| Morning Economy | ❌ | 매일 새로 발행하는 반복 작업 |
+| Morning Economy | ✅ `-c` | **2026-08-07에 `-c` 추가** (원래는 ❌였음). 의도적 변경이다 |
 
-> `-c`는 맥락이 유지되는 대신 긴 대화를 계속 물고 가서 사용량(5시간/주간 한도) 소진이 빨라짐. 그래서 전부가 아니라 선별 적용.
+> `-c`는 맥락이 유지되는 대신 긴 대화를 계속 물고 가서 사용량(5시간/주간 한도) 소진이 빨라진다. 다만 2026-08-07 기준 **8개 전부 `-c`로 통일**했다.
 
 ### ⚠️ `-c`의 함정과 폴백 처리 (2026-08-06 추가)
 
@@ -86,7 +87,8 @@ claude remote-control -c --name '이름'; if ($LASTEXITCODE -ne 0) { claude remo
   | `"--session-id <ID>"` | 특정 대화를 지정해 항상 그것만 이어받기 |
 
   - `""`가 아닌 경우 실패 시 자동으로 새 대화 폴백이 걸린다
-- 이전 버전은 `claude-remote-control.vbs.bak`으로 백업해 둠
+- ⚠️ **`.vbs`를 수정한 뒤에는 `RunRC` 목록을 반드시 다시 확인할 것.** 2026-08-07에 세션을 추가·제거하는 과정에서 Question 줄이 조용히 누락된 적이 있다 (재부팅 후에야 세션이 안 뜨는 걸로 발견)
+- 백업 파일(`claude-remote-control.vbs.bak*`)은 2026-08-07에 전부 정리했다. 지금은 `claude-remote-control.vbs` 하나만 있다
 - 수동으로 전체 재시작하려면: 기존 프로세스 종료 후 `wscript.exe "<.vbs 경로>"` 실행
 - 실행 중인지 확인:
   ```powershell
@@ -137,87 +139,57 @@ Start-Process -FilePath "C:\Users\sanghyeon\.local\bin\claude.exe" `
 
 `~/.claude.json`의 프로젝트 항목에 `hasTrustDialogAccepted: true`가 **있어도** CLI가 `Workspace not trusted`로 거부할 수 있다. 그 값은 데스크톱 앱이 기록한 것으로, CLI의 trust 판정과 별개다 (반대로 Tokbell은 항목이 아예 없는데도 통과). **설정 파일을 보고 trust 여부를 판단하지 말고, 등록 절차 1단계(그 폴더에서 인터랙티브 `claude` 실행 → Yes → `/exit`)를 무조건 수행할 것.**
 
-등록을 창에서 직접 할 때는 이전과 동일한 두 줄이면 된다 (QR이 바로 떠서 태블릿 확인이 쉬움. 단, 창을 닫으면 세션도 꺼지므로 상시 운용은 `.vbs` 백그라운드 방식):
+등록은 창에서 아래 두 줄을 직접 실행한다 (QR이 바로 떠서 태블릿 확인이 쉬움. 단, 창을 닫으면 세션도 꺼지므로 상시 운용은 `.vbs` 백그라운드 방식):
 
 ```powershell
-cd <폴더>; claude          # trust Yes → /exit
-claude remote-control -c --name '이름'
+cd D:\test_workspace\AskMeAnything; claude          # trust Yes → /exit
+claude remote-control -c --name "AskMeAnything"
 ```
 
-### ⚠️ 2026-08-06 추가 — 데스크톱 앱 대화는 태블릿에서 이어받을 수 없다
+> ⚠️ 이 두 줄을 감싸는 **래퍼 스크립트(.ps1 등)를 만들지 말 것.** 창에서 직접 실행하는 방식으로 통일한다.
 
-`question` 폴더에 활성 대화가 여러 개 생겼다 (데스크톱 앱 1개 + remote-control이 만든 것들). **이걸 하나로 합치려 시도했으나 불가능한 것으로 확인됐다.**
+### ⚠️ 데스크톱 앱 대화는 태블릿에서 이어받을 수 없다 (2026-08-06 확인)
 
-**확인된 사실 (실제 시도해서 얻은 결과)**
+데스크톱 앱에서 진행한 대화와 remote-control이 다루는 대화는 **계보가 다르다.** 하나로 합치려 시도했으나 불가능한 것으로 확인됐다.
 
 | 시도 | 결과 |
 |---|---|
 | `--session-id <로컬 UUID>` | ❌ 실패. `Error: Could not reach the server to look up session ...` — 이 옵션은 **클라우드 세션 ID(`session_...`)** 만 조회한다. 로컬 `.jsonl` 파일명 UUID는 서버가 모른다 |
 | `-c` | ⚠️ 로컬 최신 대화가 아니라 **remote-control이 관리하던 마지막 세션**을 이어받는다 (`Resuming session session_...`) |
 
-**결론: 데스크톱 앱(또는 `/remote-control`을 못 쓰는 환경)에서 진행한 대화는 태블릿으로 넘길 수 없다.** remote-control이 다루는 세션과 별개의 계보다.
+### ✅ 현재 방식 — `-c` 하나로 통일 (2026-08-07 확정)
 
-### ✅ 해결법 — 로컬 대화를 태블릿에 올리는 방법 (2026-08-06 성공)
+한때 `claude --resume <UUID> --fork-session --remote-control "이름"`으로 로컬 대화를 포크해 태블릿에 올리는 방식을 Question에만 적용했었다. **지금은 쓰지 않는다.**
 
-**`remote-control` 하위 명령이 아니라, `claude`의 `--remote-control` 옵션을 쓴다.** 이건 `--resume`과 조합할 수 있어서 로컬 대화를 그대로 원격 세션으로 띄운다.
+폐기한 이유:
 
-```powershell
-cd D:\test_workspace\question; claude --resume <로컬-세션-UUID> --fork-session --remote-control "Question"
-```
+- `.vbs`에 포크 UUID를 하드코딩해야 해서, 대화가 바뀔 때마다 손대야 한다
+- 포크한 순간부터 원본(데스크톱)과 사본(태블릿)이 갈라져 어느 쪽이 최신인지 헷갈린다
+- `-c`는 이 포크를 못 찾아간다 (remote-control 계보의 마지막 클라우드 세션을 물기 때문). 두 방식이 섞이면 예측이 안 된다
 
-| 옵션 | 역할 |
-|---|---|
-| `--resume <UUID>` | 로컬 `.jsonl` 대화를 이어받는다 (하위 명령의 `--session-id`와 달리 **로컬 UUID가 먹는다**) |
-| `--fork-session` | 새 세션 ID로 복사해서 띄운다. 원본이 데스크톱 앱에서 살아있을 때 **충돌을 피하려면 필수** |
-| `--remote-control "이름"` | 그 세션을 태블릿에 노출 |
-
-### 🔑 결정적 함정 — 출력 리다이렉트를 걸면 죽는다
-
-`claude --remote-control`은 **대화형 세션**이라 표준입출력이 파일로 묶이면 즉시 종료된다. `-WindowStyle Hidden`은 문제없다.
+**그래서 지금은 8개 세션 전부 `-c`다.** 등록·운영은 아래 한 가지 흐름만 쓴다.
 
 ```powershell
-# ❌ 죽는다 — Redirect 때문 (창 숨김 때문이 아니다)
-Start-Process ... -RedirectStandardOutput a.log -RedirectStandardError b.log -WindowStyle Hidden
-#   → Error: No deferred tool marker found in the resumed session. ... Provide a prompt to continue.
+# 1) trust 승인 (건너뛰면 백그라운드에서 조용히 죽는다)
+cd D:\test_workspace\AskMeAnything; claude          # trust Yes → /exit
 
-# ✅ 산다 — 리다이렉트만 빼면 창 없이 정상 상주
-Start-Process -FilePath "C:\Users\sanghyeon\.local\bin\claude.exe" `
-  -ArgumentList '--resume <UUID> --remote-control "Question"' `
-  -WorkingDirectory 'D:\test_workspace\question' -WindowStyle Hidden
+# 2) 창에서 띄워 QR로 태블릿 접속 확인
+claude remote-control -c --name "AskMeAnything"
+
+# 3) 확인되면 창을 닫고 .vbs에 RunRC 줄을 추가해 상시 백그라운드로 전환
 ```
 
-> 백그라운드 세션을 진단할 때 쓰는 `-RedirectStandardError` 기법(위 4장 참고)은 **`remote-control` 하위 명령에만** 쓸 것. `--remote-control` 옵션 형태에 걸면 진단하려던 그 프로세스를 자기가 죽인다.
+**운영 원칙**
 
-**최종 절차 (2026-08-06 확정)**
-
-```powershell
-# 1) 포크 생성 — 원본이 데스크톱 앱에서 살아있으므로 --fork-session 필수
-#    (초기 프롬프트를 주면 한 번 응답 후 종료되지만, 그 과정에서 포크 .jsonl이 만들어진다)
-Start-Process -FilePath "C:\Users\sanghyeon\.local\bin\claude.exe" `
-  -ArgumentList '--resume <원본UUID> --fork-session --remote-control "Question" "연결 확인용"' `
-  -WorkingDirectory 'D:\test_workspace\question' -WindowStyle Hidden
-#    → 새로 생긴 .jsonl 파일명이 포크된 대화의 UUID
-
-# 2) 그 포크를 창 없이 상주시킨다 (리다이렉트 금지)
-Start-Process -FilePath "C:\Users\sanghyeon\.local\bin\claude.exe" `
-  -ArgumentList '--resume <포크UUID> --remote-control "Question"' `
-  -WorkingDirectory 'D:\test_workspace\question' -WindowStyle Hidden
-
-# 3) .vbs의 Question 줄을 "--resume <포크UUID>"로 바꿔 재부팅 후에도 유지
-```
-
-**`-c`는 이 대화를 못 찾아간다.** `-c`는 remote-control 계보의 마지막 클라우드 세션을 물기 때문에, 포크된 로컬 대화가 아니라 엉뚱한 예전 세션을 잡는다. 그래서 Question만 `--resume`으로 대화를 직접 지정하는 방식을 쓴다.
-
-**그 외 대응**
-
-- 태블릿에서 이어갈 작업은 **처음부터 remote-control 세션에서** 진행하는 게 가장 깔끔하다
-- 넘겨야 할 때는 **인수인계 파일**(이 문서처럼)을 폴더에 남겨도 된다
+- 태블릿에서 이어갈 작업은 **처음부터 remote-control 세션에서** 진행한다. 데스크톱 앱에서 시작하면 넘길 수 없다
+- 넘겨야 할 상황이면 **인수인계 파일**(이 문서처럼)을 폴더에 남긴다
 - 터미널 세션이라면 그 안에서 `/remote-control` 입력으로도 된다 (데스크톱 앱에서는 이 명령을 못 쓴다)
-- 포크한 순간부터 원본(데스크톱)과 사본(태블릿)은 **각자 갈라진다.** 한쪽만 쓰는 게 헷갈리지 않는다
+
+> 진단 시 참고: `-RedirectStandardOutput/-RedirectStandardError` 기법(위 진단 방법 참고)은 **`remote-control` 하위 명령에만** 쓸 것. `claude --remote-control` 옵션 형태는 대화형이라 표준입출력이 파일로 묶이면 즉시 죽는다 (`-WindowStyle Hidden`은 무관).
 
 ## 5. 운영 주의사항
 
 - 재실행/재부팅 때마다 세션 URL이 새로 발급됨 → 태블릿은 항상 세션 목록의 최신 세션으로
-- 9개 세션이 상시 대기 중 — 실제 사용량은 대화한 만큼 소진되지만, 안 쓰는 프로젝트는 `.vbs`에서 빼는 것도 방법 (`/usage`로 확인)
-- **가끔 실제로 몇 개가 떠 있는지 확인할 것.** 위 확인 명령의 결과 개수가 `.vbs`의 `RunRC` 줄 개수(현재 9)와 맞아야 한다. 모자라면 위 진단 방법으로 원인을 본다.
+- 8개 세션이 상시 대기 중 — 실제 사용량은 대화한 만큼 소진되지만, 안 쓰는 프로젝트는 `.vbs`에서 빼는 것도 방법 (`/usage`로 확인)
+- **가끔 실제로 몇 개가 떠 있는지 확인할 것.** 위 확인 명령의 결과 개수가 `.vbs`의 `RunRC` 줄 개수(현재 8)와 맞아야 한다. 모자라면 위 진단 방법으로 원인을 본다.
 - 클라우드 세션(claude.ai/code)은 Linux VM이라 로컬 Chrome/티스토리/스케줄러가 필요한 작업(morning_economy 발행 등)은 불가 → Remote Control 방식 유지
