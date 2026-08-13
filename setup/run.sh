@@ -75,6 +75,8 @@ RunRC "$HOME/workspace/tokbell_sender" "Tokbell Sender_맥" "-c"
 RunRC "$HOME/workspace/morning_economy" "Morning Economy_맥" "-c"
 RunRC "$HOME/workspace/rabbit-typing-adventure" "Rabbit Typing_맥" "-c"
 RunRC "$HOME/workspace/kafka_test" "kafka test_맥" "-c"
+RunRC "$HOME/workspace/tokbell_ha" "Tokbell HA_맥" "-c"
+RunRC "$HOME/workspace/webs.madang.ai" "Webs Madang_맥" "-c"
 # ───────────────────────────────────────────────────
 
 wait  # 백그라운드 루프 유지
