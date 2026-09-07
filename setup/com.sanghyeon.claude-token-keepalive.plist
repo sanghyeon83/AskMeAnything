@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.sanghyeon.claude-token-keepalive</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-c</string>
+    <string>$HOME/.claude/remote-control/token-keepalive.sh</string>
+  </array>
+  <!-- 로그인·재부팅 직후 한 번 (오래 꺼뒀다 켠 경우가 가장 위험하다) -->
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- 6시간마다. 갱신 창이 약 4일이라 이 간격이면 충분하고,
+       여유가 있을 때는 아무 호출도 하지 않으므로 비용이 없다. -->
+  <key>StartInterval</key>
+  <integer>21600</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/sanghyeon/.claude/remote-control/logs/token-keepalive.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/sanghyeon/.claude/remote-control/logs/token-keepalive.err</string>
+</dict>
+</plist>
