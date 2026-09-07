@@ -78,12 +78,29 @@ if ($Install) {
     # 로그온 직후 1회 + 6시간마다. 오래 꺼뒀다 켠 경우가 가장 위험하므로 로그온 트리거가 핵심이다.
     $t1 = New-ScheduledTaskTrigger -AtLogOn
     $t1.Delay = 'PT3M'
+    # ⚠️ -RepetitionDuration ([TimeSpan]::MaxValue) 를 쓰면 안 된다.
+    #    P99999999DT23H59M59S 로 직렬화돼 작업 스케줄러가 "out of range" 로 거부한다
+    #    (2026-09-07 윈도우 실측). 생략하면 무기한 반복이 된다.
     $t2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) `
-            -RepetitionInterval (New-TimeSpan -Hours 6) -RepetitionDuration ([TimeSpan]::MaxValue)
+            -RepetitionInterval (New-TimeSpan -Hours 6)
     $set = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
              -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $t1,$t2 `
-        -Settings $set -Description 'Claude CLI 갱신토큰이 만료되지 않도록 점검·갱신하고, 만료가 임박하면 알린다.' -Force | Out-Null
+    # 실패를 삼키지 않는다. 예전 판은 등록이 거부돼도 "등록 완료" 를 찍고 0 으로 끝나서
+    # 설치된 줄 알게 됐다 — 조용한 실패가 실패 자체보다 나쁘다.
+    try {
+        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $t1,$t2 `
+            -Settings $set -Description 'Claude CLI 갱신토큰이 만료되지 않도록 점검·갱신하고, 만료가 임박하면 알린다.' `
+            -Force -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Host "등록 실패: $($_.Exception.Message)"
+        Write-Log  "!! 작업 등록 실패 ($TaskName): $($_.Exception.Message)"
+        exit 1
+    }
+    if (-not (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
+        Write-Host "등록 실패: 등록 후 작업을 찾을 수 없다"
+        Write-Log  "!! 작업 등록 실패 ($TaskName): 등록 후 조회 안 됨"
+        exit 1
+    }
     Write-Host "등록 완료: $TaskName"
     Write-Log  "작업 등록됨 ($TaskName)"
     exit 0

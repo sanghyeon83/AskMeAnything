@@ -27,6 +27,19 @@ function Write-BootLog([string]$Message) {
     Set-Content -Path $log -Value $keep -Encoding utf8
 }
 
+# 토큰 만료 점검을 먼저 돌린다. 세션이 이미 떠 있든 아니든 매 로그온마다 확인해야 한다.
+# 작업 스케줄러로 넣으려 했으나 이 계정이 관리자가 아니라 Register-ScheduledTask 가
+# Access is denied 로 거부된다 (2026-09-07 실측). 그래서 로그온 경로에 얹는다.
+# 여유가 있으면 파일만 읽고 끝나므로 비용이 없다. 실패해도 세션 기동은 계속한다.
+$keepalive = Join-Path $env:USERPROFILE '.claude\remote-control\token-keepalive.ps1'
+if (Test-Path $keepalive) {
+    try {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $keepalive | Out-Null
+    } catch {
+        Write-Host "토큰 점검 실패(무시하고 계속): $($_.Exception.Message)"
+    }
+}
+
 # 이미 떠 있으면 중복 기동하지 않는다
 $existing = Get-CimInstance Win32_Process -Filter "Name='claude.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match 'remote-control' -and $_.CommandLine -match [regex]::Escape($SessionName) }
