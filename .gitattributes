@@ -1,0 +1,6 @@
+# 윈도우 스크립트는 어느 플랫폼에서 체크아웃하든 CRLF로 내려받게 한다.
+# 맥에서 체크아웃해 윈도우로 옮기는 경로가 실제로 있어서(2026-08 이관) 필요하다.
+# start-hidden.ps1 은 UTF-8 BOM 도 유지돼야 한다 — Windows PowerShell 5.1 이
+# BOM 없는 UTF-8 을 cp949 로 읽어 한글 세션 이름이 깨진다.
+*.vbs text eol=crlf
+*.ps1 text eol=crlf
