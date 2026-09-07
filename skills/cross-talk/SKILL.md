@@ -13,7 +13,7 @@ description: 다른 컴퓨터나 클라우드에서 실행 중인 내 계정의 
 2. **2차 — 트리거 중계 (1차 목록에 상대가 안 보일 때).** claude-code-remote MCP 도구를 쓴다. 도구가 안 보이면 ToolSearch로 "list_sessions", "create_trigger", "fire_trigger", "delete_trigger", "get_session"을 로드한다.
    > 환경에 따라 이 MCP 도구 대신 **RemoteTrigger** 도구가 동등 기능을 제공한다 (2026-09-07 윈도우 로컬 환경에서 확인). 그 경우 create → run으로 발사하고, delete가 없으므로 update로 **enabled=false 비활성화**까지 해둔다.
    > RemoteTrigger의 create body는 **`job_config.ccr` 아래에 `environment_id`와 `events`를 넣어야 한다.** `session_request.events`로 보내면 `Extra inputs are not permitted`, `environment_id`를 빼면 `must set ccr.environment_id`가 난다 (맥·윈도우 양쪽에서 각각 겪음). `initiation`은 선택사항이다.
-   > ⚠️ **본문이 길면 JSON이 잘려 파싱 오류가 난다.** 한글은 `\uXXXX`로 이스케이프되며 약 6배로 불어나므로, 본문을 **2000자 이내**로 끊어 보낸다.
+   > ⚠️ **본문이 길면 JSON이 잘려 파싱 오류가 난다.** 한글은 `\uXXXX`로 이스케이프되며 약 6배로 불어난다. **한글 300~400자 이내**로 끊어 여러 통으로 보낸다 (실패 사례가 5,194바이트였다. 이전 판의 "2000자"는 escape 후 크기를 과소평가한 수치였다).
    1) list_sessions로 계정의 전체 세션을 **실행 시점에** 조회하고, 상대 키워드(대소문자 무시, 부분 일치)로 상대를 찾는다. **선정 규칙: ① ARCHIVED 제외 → ② connection_status가 connected인 것 우선 → ③ created_at 최신.** 미리 알아둔 세션 ID가 있어도 재확인 없이 쓰지 않는다 — 세션은 수시로 아카이브되고 재생성된다 (2026-09-07에 이 규칙 없이 이름만으로 골랐다가 엉뚱한 세션에 보낸 사고가 있었다). 애매하면 후보 목록을 사용자에게 보여주고 고르게 한다.
    2) create_trigger: persistent_session_id에 상대 세션 ID, 스케줄 없음(cron_expression/run_once_at 둘 다 생략), initiation은 human_request, prompt는 아래 "메시지 형식"대로 작성한다.
    3) fire_trigger로 즉시 발사한다.
