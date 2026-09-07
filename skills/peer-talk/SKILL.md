@@ -1,6 +1,6 @@
 ---
 name: peer-talk
-description: 같은 맥에서 실행 중인 다른 프로젝트의 Claude 세션을 찾아 대화를 시작하거나 메시지를 전달한다. 세션이 재시작돼 ID가 바뀌어도 이름으로 다시 찾는다. 사용법 - /peer-talk [상대 키워드] [전달할 내용]. 키워드 생략 시 Tokbell 폴더에서는 sender, tokbell_sender 폴더에서는 tokbell이 기본 상대다.
+description: 같은 컴퓨터에서 실행 중인 다른 프로젝트의 Claude 세션을 찾아 대화를 시작하거나 메시지를 전달한다. 세션이 재시작돼 ID가 바뀌어도 이름으로 다시 찾는다. 사용법 - /peer-talk [상대 키워드] [전달할 내용]. 키워드 생략 시 Tokbell 폴더에서는 sender, tokbell_sender 폴더에서는 tokbell이 기본 상대다.
 ---
 
 # peer-talk — 같은 컴퓨터 안 세션 간 대화 연결
