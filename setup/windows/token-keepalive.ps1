@@ -83,6 +83,16 @@ function Send-Alert([string]$Message) {
 # ── 설치 / 제거 ────────────────────────────────────────────
 if ($Install) {
     $me = $MyInvocation.MyCommand.Path
+    # 예전 이름으로 등록된 작업이 남아 있으면 지운다. $TaskName 이 바뀐 적이 있어
+    # ('Claude CLI 토큰 갱신' -> 현재 이름) 그냥 두면 -Uninstall 로도 안 지워지는
+    # 고아 작업이 된다. 이름을 또 바꾸면 여기 추가할 것.
+    foreach ($old in @('Claude CLI 토큰 갱신')) {
+        if ($old -ne $TaskName -and (Get-ScheduledTask -TaskName $old -ErrorAction SilentlyContinue)) {
+            Unregister-ScheduledTask -TaskName $old -Confirm:$false -ErrorAction SilentlyContinue
+            Write-Host "옛 작업 제거: $old"
+            Write-Log  "옛 이름 작업 제거됨 ($old)"
+        }
+    }
     $action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
                  -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f $me)
     # 로그온 직후 1회 + 6시간마다. 오래 꺼뒀다 켠 경우가 가장 위험하므로 로그온 트리거가 핵심이다.
@@ -99,7 +109,7 @@ if ($Install) {
     # 설치된 줄 알게 됐다 — 조용한 실패가 실패 자체보다 나쁘다.
     try {
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $t1,$t2 `
-            -Settings $set -Description 'Claude CLI 갱신토큰이 만료되지 않도록 점검·갱신하고, 만료가 임박하면 알린다.' `
+            -Settings $set -Description 'Claude CLI 로그인 만료를 감시하고 임박하면 알린다. 갱신은 하지 않는다(불가능). 만료 시 사용자가 claude auth login --claudeai 로 재로그인해야 한다.' `
             -Force -ErrorAction Stop | Out-Null
     } catch {
         Write-Host "등록 실패: $($_.Exception.Message)"
@@ -160,7 +170,11 @@ if ($null -eq $info) {
 
 # ── 3) 여유가 있으면 아무것도 하지 않는다 ──────────────────
 function Get-LastAlert {
-    try { return [datetime](Get-Content $StateFile -Raw -Encoding utf8 | ConvertFrom-Json).last_alert } catch { return [datetime]::MinValue }
+    # -ErrorAction SilentlyContinue 가 없으면 상태 파일이 아직 없을 때 (첫 실행)
+    # try/catch 가 값은 잡아주지만 비종료 오류가 그대로 화면·stderr 로 새어 나온다.
+    try {
+        return [datetime](Get-Content $StateFile -Raw -Encoding utf8 -ErrorAction SilentlyContinue | ConvertFrom-Json).last_alert
+    } catch { return [datetime]::MinValue }
 }
 $prevAlert = Get-LastAlert
 
