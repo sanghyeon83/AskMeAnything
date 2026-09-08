@@ -42,12 +42,15 @@ $Log           = Join-Path $RcDir 'token-keepalive.log'
 $BootLog       = Join-Path $RcDir 'boot.log'           # 부팅 확인용 로그에도 경고를 남긴다
 $StateFile     = Join-Path $RcDir 'token.json'
 $TaskName      = 'Claude CLI 로그인 만료 감시'
-$WarnDays      = 5     # 이 아래로 남으면 알린다 (하루 한 번)
-$UrgentDays    = 2     # 이 아래면 실행할 때마다 알린다
-$AlertGapHours = 12    # 경보 최소 간격
+$WarnDays       = 5     # 이 아래로 남으면 알린다 (하루 한 번)
+$UrgentDays     = 2     # 이 아래면 실행할 때마다 알린다
+$AlertGapHours  = 12    # 경보 최소 간격
+$AutoDays       = 7     # 이 아래면 재로그인을 자동으로 시도한다 (창 없이 조용히)
+$LaunchGapHours = 12    # 자동 시도 최소 간격 (연달아 우르르 도는 것 방지)
+$Relogin        = Join-Path $RcDir 'relogin.ps1'
 
 # 자격증명 위치 후보. 맥은 키체인이지만 윈도우는 파일이다.
-# ⚠️ 이 경로는 맥에서 확인하지 못했다. 설치 전에 실제 위치를 확인할 것.
+# 후보 1(~\.claude\.credentials.json)이 실제 위치임을 2026-09-08 확인했다.
 $CredCandidates = @(
     (Join-Path $env:USERPROFILE '.claude\.credentials.json'),
     (Join-Path $env:APPDATA    'Claude\.credentials.json')
@@ -60,6 +63,36 @@ function Write-Log([string]$Message) {
     Add-Content -Path $Log -Value $line -Encoding utf8
     $keep = Get-Content $Log -Encoding utf8 -ErrorAction SilentlyContinue | Select-Object -Last 200
     Set-Content -Path $Log -Value $keep -Encoding utf8
+}
+
+function Start-Relogin {
+    # 재로그인을 창 없이 조용히 시작한다.
+    # relogin.ps1 이 알아서 다음을 한다:
+    #   - 창 없이 로그인 시도 (브라우저 세션이 살아 있으면 사람 개입 없이 끝난다.
+    #     2026-09-08 실측 28~150초, 종료코드 0)
+    #   - 실패하면 스스로 보이는 창을 띄워 사람이 마무리하게 한다
+    # 여기서는 기다리지 않는다. 감시 작업이 몇 분씩 붙잡혀 있으면 안 된다.
+    if (-not (Test-Path $Relogin)) {
+        Write-Log "!! 재로그인 스크립트 없음: $Relogin"
+        return $false
+    }
+    # 이미 로그인 절차가 돌고 있으면 또 시작하지 않는다
+    $running = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+               Where-Object { $_.CommandLine -match 'relogin\.ps1' }
+    if ($running) {
+        Write-Log "   재로그인이 이미 돌고 있다 (PID $($running.ProcessId -join ',')). 새로 시작하지 않음."
+        return $false
+    }
+    try {
+        Start-Process -FilePath 'powershell.exe' `
+            -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $Relogin `
+            -WindowStyle Hidden -ErrorAction Stop
+        Write-Log '   재로그인을 조용히 시작했다 (실패하면 relogin.ps1 이 창을 띄운다)'
+        return $true
+    } catch {
+        Write-Log "!! 재로그인 기동 실패: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 function Send-Alert([string]$Message) {
@@ -169,33 +202,53 @@ if ($null -eq $info) {
 }
 
 # ── 3) 여유가 있으면 아무것도 하지 않는다 ──────────────────
-function Get-LastAlert {
+function Get-StateTime([string]$Field) {
     # -ErrorAction SilentlyContinue 가 없으면 상태 파일이 아직 없을 때 (첫 실행)
     # try/catch 가 값은 잡아주지만 비종료 오류가 그대로 화면·stderr 로 새어 나온다.
     try {
-        return [datetime](Get-Content $StateFile -Raw -Encoding utf8 -ErrorAction SilentlyContinue | ConvertFrom-Json).last_alert
+        return [datetime](Get-Content $StateFile -Raw -Encoding utf8 -ErrorAction SilentlyContinue | ConvertFrom-Json).$Field
     } catch { return [datetime]::MinValue }
 }
-$prevAlert = Get-LastAlert
+$prevAlert  = Get-StateTime 'last_alert'
+$prevLaunch = Get-StateTime 'last_launch'
 
-if ($info.Days -gt $WarnDays) {
+function Save-State([string]$State, [double]$Days, [datetime]$Alert, [datetime]$Launch) {
+    ('{{"state":"{0}","days_left":{1:N3},"last_alert":"{2:yyyy-MM-ddTHH:mm:ss}","last_launch":"{3:yyyy-MM-ddTHH:mm:ss}","checked_at":"{4:yyyy-MM-ddTHH:mm:ss}"}}' `
+        -f $State, $Days, $Alert, $Launch, (Get-Date)) | Set-Content $StateFile -Encoding utf8
+}
+
+# 조기 종료 문턱은 "무언가 해야 하는 가장 이른 시점" 이어야 한다.
+# $AutoDays 를 $WarnDays 보다 크게 잡아 놓고 $WarnDays 로 끊으면
+# 그 사이 구간에서 자동 재로그인이 영영 안 돈다 — 2026-09-08 에 실제로 그랬다.
+$ActDays = [Math]::Max($WarnDays, $AutoDays)
+
+if ($info.Days -gt $ActDays) {
     Write-Log ('정상 — 재로그인까지 {0:N3}일 (만료 {1:yyyy-MM-dd HH:mm}). 조치 없음.' -f $info.Days, $info.Expires)
-    ('{{"state":"ok","days_left":{0:N3},"last_alert":"{1:yyyy-MM-ddTHH:mm:ss}","checked_at":"{2:yyyy-MM-ddTHH:mm:ss}"}}' `
-        -f $info.Days, $prevAlert, (Get-Date)) | Set-Content $StateFile -Encoding utf8
+    Save-State 'ok' $info.Days $prevAlert $prevLaunch
     exit 0
 }
 
-# ── 4) 임박 → 경보 (갱신은 못 하므로 알리는 것이 전부다) ───
-$urgent  = $info.Days -lt $UrgentDays
-$overdue = ((Get-Date) - $prevAlert).TotalHours -gt $AlertGapHours
-$alertAt = $prevAlert
+# ── 4) 임박 → 자동 재로그인 + 경보 ─────────────────────────
+# 갱신토큰 자체는 연장이 안 되지만, 재로그인하면 창이 29일 새로 시작된다.
+# 브라우저에 Claude 세션이 살아 있고 브라우저가 127.0.0.1 에 닿으면
+# 창도 사람도 없이 끝난다 (2026-09-08 윈도우 실측, 28~150초).
+# 조건이 깨지면 relogin.ps1 이 스스로 보이는 창을 띄워 사람에게 넘긴다.
+$warn     = $info.Days -lt $WarnDays
+$urgent   = $info.Days -lt $UrgentDays
+$overdue  = ((Get-Date) - $prevAlert).TotalHours -gt $AlertGapHours
+$alertAt  = $prevAlert
+$launchAt = $prevLaunch
 
-if ($urgent -or $overdue) {
-    Send-Alert ('CLI 로그인이 {0:N1}일 뒤 만료됩니다 (만료 {1:yyyy-MM-dd HH:mm}). claude auth login --claudeai 로 재로그인하세요. 자동 갱신은 불가능합니다.' -f $info.Days, $info.Expires)
+if ($info.Days -lt $AutoDays -and ((Get-Date) - $prevLaunch).TotalHours -gt $LaunchGapHours) {
+    Write-Log ('임박({0:N3}일) — 재로그인을 조용히 시작한다.' -f $info.Days)
+    if (Start-Relogin) { $launchAt = Get-Date }
+}
+
+if ($urgent -or ($warn -and $overdue)) {
+    Send-Alert ('CLI 로그인이 {0:N1}일 뒤 만료됩니다 (만료 {1:yyyy-MM-dd HH:mm}). 자동 재로그인을 시작했습니다. 이 경고가 계속 뜨면 claude auth login --claudeai 를 직접 실행하세요.' -f $info.Days, $info.Expires)
     $alertAt = Get-Date
-} else {
+} elseif ($warn) {
     Write-Log ('임박({0:N3}일)하지만 최근 경보 후 {1}시간이 안 지나 알림은 생략.' -f $info.Days, $AlertGapHours)
 }
-('{{"state":"expiring","days_left":{0:N3},"last_alert":"{1:yyyy-MM-ddTHH:mm:ss}","checked_at":"{2:yyyy-MM-ddTHH:mm:ss}"}}' `
-    -f $info.Days, $alertAt, (Get-Date)) | Set-Content $StateFile -Encoding utf8
+Save-State 'expiring' $info.Days $alertAt $launchAt
 exit 0
