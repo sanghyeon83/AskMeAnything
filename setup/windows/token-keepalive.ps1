@@ -1,17 +1,26 @@
-﻿# Claude CLI 로그인 토큰 자동 갱신 · 만료 경보 (Windows)
+﻿# Claude CLI 로그인 만료 감시 · 경보 (Windows)
+#
+# ⚠️ 이름은 keepalive 지만 "갱신"은 하지 않는다. 할 수 없기 때문이다.
+#    2026-09-07 맥에서 실측: 액세스 토큰 만료 직후 강제로 갱신을 일으켜 보니
+#      액세스 토큰  09-07 19:00:16 -> 09-08 02:57:08   갱신됨
+#      갱신 토큰    09-11 04:25:10 -> 09-11 04:25:10   그대로
+#    갱신토큰은 로그인 시점부터 약 29일 고정이고, 써도 뒤로 밀리지 않는다.
+#      맥    키체인 cdat 2026-08-13 -> 만료 2026-09-11 (29일)
+#      이 PC 재로그인   2026-09-07 -> 만료 2026-10-06 (29일)
+#    네가 보고한 28.465일이 이 사실을 드러낸 단서였다. 맥의 3.4일과 같은 규칙으로
+#    설명되지 않아 다시 쟀고, "창이 밀린다"는 전제가 깨졌다.
+#    즉 한 달에 한 번은 사람이 다시 로그인해야 한다. 자동화로는 못 막는다.
 #
 # 왜 필요한가:
 #   데스크톱 앱 로그인과 터미널 CLI 로그인은 별개다. CLI 만 로그아웃되면
 #   remote-control 세션이 안 뜨는데 앱은 멀쩡해서 눈치채기 어렵다.
 #   이 PC 가 2026-08-26 부터 그 상태였고 9/7 에야 발견됐다.
 #
-# 무엇을 하나 (맥의 token-keepalive.sh 와 같은 설계):
+# 하는 일은 하나다 — 만료 전에 알려주는 것 (맥의 token-keepalive.sh 와 같은 설계):
 #   1) claude auth status --json 으로 로그인 상태 확인 (API 호출 없음, 무료)
 #   2) 자격증명 파일에서 만료시각만 읽는다. 토큰 값은 읽지도 기록하지도 않는다
-#   3) 갱신토큰 잔여가 ThresholdDays 미만일 때만 최소 호출로 갱신을 유도한다
-#   4) 로그아웃됐거나 유도 후에도 AlertDays 미만이면 알린다 (복구는 사용자만: claude auth login --claudeai)
-#
-# 한계: PC 가 꺼져 있는 동안은 아무것도 못 한다. 갱신 창보다 오래 꺼두면 만료된다.
+#   3) WarnDays 이하로 남으면 알린다 (하루 한 번). UrgentDays 이하면 실행할 때마다 알린다
+#   4) 이미 로그아웃 상태면 즉시 알린다. 복구는 사용자만 가능: claude auth login --claudeai
 #
 # 설치:   powershell -ExecutionPolicy Bypass -File token-keepalive.ps1 -Install
 # 제거:   powershell -ExecutionPolicy Bypass -File token-keepalive.ps1 -Uninstall
@@ -32,9 +41,10 @@ $RcDir         = Join-Path $env:USERPROFILE '.claude\remote-control'
 $Log           = Join-Path $RcDir 'token-keepalive.log'
 $BootLog       = Join-Path $RcDir 'boot.log'           # 부팅 확인용 로그에도 경고를 남긴다
 $StateFile     = Join-Path $RcDir 'token.json'
-$TaskName      = 'Claude CLI 토큰 갱신'
-$ThresholdDays = 2     # 잔여가 이 아래면 갱신을 유도한다
-$AlertDays     = 1     # 유도 후에도 이 아래면 알린다
+$TaskName      = 'Claude CLI 로그인 만료 감시'
+$WarnDays      = 5     # 이 아래로 남으면 알린다 (하루 한 번)
+$UrgentDays    = 2     # 이 아래면 실행할 때마다 알린다
+$AlertGapHours = 12    # 경보 최소 간격
 
 # 자격증명 위치 후보. 맥은 키체인이지만 윈도우는 파일이다.
 # ⚠️ 이 경로는 맥에서 확인하지 못했다. 설치 전에 실제 위치를 확인할 것.
@@ -149,31 +159,29 @@ if ($null -eq $info) {
 }
 
 # ── 3) 여유가 있으면 아무것도 하지 않는다 ──────────────────
-if ($info.Days -gt $ThresholdDays) {
-    Write-Log ('정상 — 갱신토큰 잔여 {0:N3}일 (만료 {1:yyyy-MM-dd HH:mm}). 조치 없음.' -f $info.Days, $info.Expires)
-    ('{{"state":"ok","days_left":{0:N3},"checked_at":"{1:yyyy-MM-ddTHH:mm:ss}"}}' -f $info.Days, (Get-Date)) |
-        Set-Content $StateFile -Encoding utf8
+function Get-LastAlert {
+    try { return [datetime](Get-Content $StateFile -Raw -Encoding utf8 | ConvertFrom-Json).last_alert } catch { return [datetime]::MinValue }
+}
+$prevAlert = Get-LastAlert
+
+if ($info.Days -gt $WarnDays) {
+    Write-Log ('정상 — 재로그인까지 {0:N3}일 (만료 {1:yyyy-MM-dd HH:mm}). 조치 없음.' -f $info.Days, $info.Expires)
+    ('{{"state":"ok","days_left":{0:N3},"last_alert":"{1:yyyy-MM-ddTHH:mm:ss}","checked_at":"{2:yyyy-MM-ddTHH:mm:ss}"}}' `
+        -f $info.Days, $prevAlert, (Get-Date)) | Set-Content $StateFile -Encoding utf8
     exit 0
 }
 
-# ── 4) 임박 → 최소 호출로 갱신 유도 ────────────────────────
-Write-Log ('임박 — 갱신토큰 잔여 {0:N3}일. 갱신 유도 호출 시작.' -f $info.Days)
-try {
-    Push-Location $WorkDir -ErrorAction Stop
-    $null = & $ClaudeExe -p 'OK' --max-turns 1 2>$null
-} catch {
-    Write-Log "갱신 유도 호출 실패: $($_.Exception.Message)"
-} finally {
-    Pop-Location -ErrorAction SilentlyContinue
-}
+# ── 4) 임박 → 경보 (갱신은 못 하므로 알리는 것이 전부다) ───
+$urgent  = $info.Days -lt $UrgentDays
+$overdue = ((Get-Date) - $prevAlert).TotalHours -gt $AlertGapHours
+$alertAt = $prevAlert
 
-$after = Get-RefreshDaysLeft
-if ($null -eq $after) { Write-Log '갱신 후 확인 실패'; exit 0 }
-Write-Log ('갱신 유도 완료 — 잔여 {0:N3}일 → {1:N3}일' -f $info.Days, $after.Days)
-('{{"state":"refreshed","days_left":{0:N3},"before":{1:N3},"checked_at":"{2:yyyy-MM-ddTHH:mm:ss}"}}' -f $after.Days, $info.Days, (Get-Date)) |
-    Set-Content $StateFile -Encoding utf8
-
-if ($after.Days -lt $AlertDays) {
-    Send-Alert ('갱신토큰이 곧 만료됩니다 (잔여 {0:N1}일). 자동 갱신이 듣지 않았습니다. claude auth login --claudeai 하세요.' -f $after.Days)
+if ($urgent -or $overdue) {
+    Send-Alert ('CLI 로그인이 {0:N1}일 뒤 만료됩니다 (만료 {1:yyyy-MM-dd HH:mm}). claude auth login --claudeai 로 재로그인하세요. 자동 갱신은 불가능합니다.' -f $info.Days, $info.Expires)
+    $alertAt = Get-Date
+} else {
+    Write-Log ('임박({0:N3}일)하지만 최근 경보 후 {1}시간이 안 지나 알림은 생략.' -f $info.Days, $AlertGapHours)
 }
+('{{"state":"expiring","days_left":{0:N3},"last_alert":"{1:yyyy-MM-ddTHH:mm:ss}","checked_at":"{2:yyyy-MM-ddTHH:mm:ss}"}}' `
+    -f $info.Days, $alertAt, (Get-Date)) | Set-Content $StateFile -Encoding utf8
 exit 0
