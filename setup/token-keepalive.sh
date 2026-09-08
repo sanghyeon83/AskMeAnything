@@ -15,7 +15,8 @@
 #   1) claude auth status --json 으로 로그인 상태 확인 (API 호출 없음)
 #   2) 키체인에서 만료시각만 읽는다 (토큰 값은 읽지도 기록하지도 않는다)
 #   3) WARN_DAYS 이하 → 알림 (12시간에 한 번)
-#   4) AUTO_DAYS 이하 → relogin.command 를 open 으로 띄운다 (24시간에 한 번)
+#   4) AUTO_DAYS 이하 → 먼저 **창 없이** 재로그인한다. 되면 사용자는 아무것도 안 해도 된다
+#      (실측 49초, 종료코드 0). 실패하면 그때만 창을 띄워 코드를 붙여넣게 한다. (24시간에 한 번)
 #   5) URGENT_DAYS 이하 → 실행할 때마다 알림
 #
 # 창을 AppleScript 가 아니라 `open <파일>.command` 로 띄우는 이유:
@@ -34,7 +35,13 @@ WARN_DAYS=5        # 이 아래면 알린다
 AUTO_DAYS=3        # 이 아래면 재로그인 창을 자동으로 띄운다
 URGENT_DAYS=2      # 이 아래면 실행할 때마다 알린다
 ALERT_GAP=43200    # 알림 최소 간격 12시간
-LAUNCH_GAP=86400   # 창 자동 기동 최소 간격 24시간 (창이 우르르 뜨는 것 방지)
+LAUNCH_GAP=86400   # 재로그인 시도 최소 간격 24시간
+HEADLESS_TIMEOUT=300  # 창 없이 시도할 때 제한 (맥 실측 49초 성공, 윈도우 28~150초)
+LOGIN_EMAIL="shpark@ibank.co.kr"
+
+# ⚠️ 성공/실패가 시간대를 탄다. 짧은 간격으로 반복하면 연달아 실패하다가 두어 시간 쉬면
+#    다시 된다 (2026-09-08 맥·윈도우 양쪽에서 같은 모양). 그래서 24시간 간격을 두고,
+#    실패해도 창 폴백을 남긴다. 재현 조건 규명은 만료가 실제 임박한 10월 초로 미뤘다.
 mkdir -p "${LOG:h}" "${STATE:h}"
 
 log() { print -- "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" }
@@ -63,7 +70,32 @@ notify() {
   /usr/bin/osascript -e "display notification \"$1\" with title \"Claude CLI 로그인 만료\" sound name \"Basso\"" 2>/dev/null
 }
 
-# 재로그인 창을 띄운다. 이미 진행 중이면 띄우지 않는다.
+# 자격증명이 마지막으로 기록된 시각. 성공 판정의 두 번째 조건.
+# (만료시각이 뒤로 밀렸는지로 판정하면 안 된다 — 새 로그인이 이전보다 이른 만료를 주기도 한다.
+#  실측: 10-06 16:48 상태에서 로그인했더니 10-05 16:45 가 됐다.)
+cred_stamp() {
+  /usr/bin/security find-generic-password -s "Claude Code-credentials" 2>&1 \
+    | grep -o '"[0-9]\{14\}Z' | tail -1
+}
+
+# ① 창 없이 재로그인. stdin 을 막아, 코드 붙여넣기가 필요하면 매달리지 않고 곧장 실패한다.
+try_headless_relogin() {
+  local b a rc
+  b=$(cred_stamp)
+  log "   창 없이 재로그인 시도 (최대 ${HEADLESS_TIMEOUT}초)"
+  run_limited $HEADLESS_TIMEOUT env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_SSE_PORT \
+    "$CLAUDE" auth login --claudeai --email "$LOGIN_EMAIL" </dev/null >/dev/null 2>&1
+  rc=$?
+  a=$(cred_stamp)
+  if [[ $rc -eq 0 && "$a" != "$b" ]]; then
+    log "   ✅ 창 없이 완료 (종료코드 0, 자격증명 재기록)"
+    return 0
+  fi
+  log "   창 없이 실패 (종료코드 $rc, 재기록 $([[ "$a" != "$b" ]] && echo 예 || echo 아니오)) → 창으로"
+  return 1
+}
+
+# ② 창을 띄워 사람이 코드를 붙여넣게 한다. 이미 진행 중이면 띄우지 않는다.
 launch_relogin() {
   if pgrep -f "auth login" >/dev/null 2>&1; then
     log "   재로그인 절차가 이미 진행 중 → 창을 새로 띄우지 않음"
@@ -73,10 +105,13 @@ launch_relogin() {
     log "   relogin.command 이 없거나 실행 권한 없음: $RELOGIN"
     return 1
   fi
-  /usr/bin/open "$RELOGIN" 2>/dev/null && { log "   재로그인 창을 띄웠다 (브라우저 승인 필요)"; return 0 }
+  /usr/bin/open "$RELOGIN" 2>/dev/null && { log "   재로그인 창을 띄웠다 (코드 붙여넣기 필요)"; return 0 }
   log "   재로그인 창 기동 실패"
   return 1
 }
+
+# 창 없이 먼저, 안 되면 창.
+do_relogin() { try_headless_relogin || launch_relogin }
 
 # ── 1) 로그인 상태
 authjson=$(run_limited 30 "$CLAUDE" auth status --json 2>/dev/null)
@@ -89,7 +124,7 @@ prev_alert=$(st last_alert); prev_launch=$(st last_launch); now=$(date +%s)
 
 if [[ "$logged" == "no" ]]; then
   notify "이미 로그아웃됐습니다. 재로그인 창을 띄웁니다. 브라우저에서 승인해 주세요."
-  launch_relogin && prev_launch=$now
+  do_relogin && prev_launch=$now
   save_state logged_out 0 $now $prev_launch
   exit 1
 fi
@@ -120,8 +155,8 @@ fi
 # ── 4) 임박 → 필요하면 창을 띄우고, 알린다
 alerted=$prev_alert; launched=$prev_launch
 if (( $(print -- "$days < $AUTO_DAYS" | bc -l) )) && (( now - prev_launch > LAUNCH_GAP )); then
-  log "임박(${days}일) — 재로그인 창 자동 기동 시도"
-  launch_relogin && launched=$now
+  log "임박(${days}일) — 재로그인 시도"
+  do_relogin && launched=$now
 fi
 
 if (( $(print -- "$days < $URGENT_DAYS" | bc -l) )) || (( now - prev_alert > ALERT_GAP )); then
